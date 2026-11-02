@@ -1,0 +1,2222 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IPv4 / ICMP Ping 協定分析與封包產生器</title>
+  <style>
+    :root {
+      --bg-primary: #0b0f19;
+      --bg-secondary: #131d31;
+      --bg-tertiary: #1e293b;
+      --bg-card: #141f36;
+      --border-color: #334155;
+      --border-focus: #38bdf8;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      
+      /* 語意色彩系統 */
+      --accent-user: #10b981;          /* 綠色：使用者指定 */
+      --accent-user-glow: rgba(16, 185, 129, 0.2);
+      --accent-user-border: #059669;
+      
+      --accent-calc: #0284c7;          /* 亮藍：公式自動連動計算 */
+      --accent-calc-glow: rgba(2, 132, 199, 0.25);
+      --accent-calc-text: #38bdf8;
+      
+      --accent-fixed: #475569;         /* 協定標準規範固定值 */
+      --accent-fixed-text: #cbd5e1;
+      
+      --accent-icmp: #8b5cf6;          /* 紫色：ICMP 層 */
+      --accent-alert: #f43f5e;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.5;
+      padding: 24px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* 頂部導覽區 */
+    header {
+      margin-bottom: 20px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .header-title h1 {
+      font-size: 1.7rem;
+      font-weight: 700;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      letter-spacing: -0.5px;
+    }
+
+    .header-title p {
+      font-size: 0.92rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .preset-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--bg-secondary);
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+
+    .preset-group label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      font-weight: 600;
+    }
+
+    select, input, button {
+      font-family: inherit;
+    }
+
+    select {
+      background: var(--bg-primary);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      padding: 7px 12px;
+      border-radius: 6px;
+      outline: none;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+
+    /* 本機 IP 自動偵測與後端狀態列 */
+    .network-status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      background: #090e1a;
+      border: 1px solid #334155;
+      padding: 10px 18px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.88rem;
+    }
+    .status-indicator-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #eab308;
+      box-shadow: 0 0 8px #eab308;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .status-indicator-dot.online {
+      background: #10b981;
+      box-shadow: 0 0 8px #10b981;
+    }
+    .status-indicator-dot.offline {
+      background: #ef4444;
+      box-shadow: 0 0 8px #ef4444;
+    }
+    .status-ip-pill {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+
+    /* 狀態與圖例標籤 */
+    .legend-bar {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+      background: var(--bg-secondary);
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 0.86rem;
+      border: 1px solid var(--border-color);
+      align-items: center;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .legend-badge {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+    }
+    .badge-user { background: var(--accent-user); box-shadow: 0 0 6px rgba(16, 185, 129, 0.5); }
+    .badge-calc { background: #38bdf8; box-shadow: 0 0 6px rgba(56, 189, 248, 0.5); }
+    .badge-fixed { background: var(--accent-fixed); }
+
+    /* 主區域網格 */
+    .layout-grid {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    @media (max-width: 1080px) {
+      .layout-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* 左側控制面板 */
+    .control-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .panel-section-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 10px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .badge-tag {
+      font-size: 0.72rem;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .badge-tag-user {
+      background: var(--accent-user-glow);
+      color: #34d399;
+      border: 1px solid var(--accent-user-border);
+    }
+    .badge-tag-calc {
+      background: var(--accent-calc-glow);
+      color: var(--accent-calc-text);
+      border: 1px solid #0284c7;
+    }
+
+    .form-group input {
+      background: var(--bg-primary);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      padding: 9px 12px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      font-family: var(--font-mono);
+      outline: none;
+      transition: all 0.2s;
+    }
+
+    .form-group input:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
+    }
+
+    .form-group .hint {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+
+    .highlight-pulse {
+      animation: pulseGlow 0.8s ease-out;
+    }
+
+    @keyframes pulseGlow {
+      0% {
+        box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.9);
+        filter: brightness(1.7);
+        border-color: #38bdf8 !important;
+      }
+      40% {
+        box-shadow: 0 0 16px 4px rgba(56, 189, 248, 0.6);
+        filter: brightness(1.3);
+      }
+      100% {
+        box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+        filter: brightness(1);
+      }
+    }
+
+    /* 摺疊設定區 */
+    .accordion-header {
+      cursor: pointer;
+      font-size: 0.88rem;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      user-select: none;
+      padding: 8px 4px;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
+    .accordion-header:hover {
+      background: rgba(56, 189, 248, 0.08);
+    }
+
+    .accordion-content {
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+      margin-top: 10px;
+      padding-top: 12px;
+      border-top: 1px dashed var(--border-color);
+    }
+
+    .accordion-content.show {
+      display: flex;
+    }
+
+    /* 核心送出按鈕專屬樣式 */
+    .btn-send-main {
+      background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+      color: white;
+      font-size: 1.02rem;
+      font-weight: 700;
+      padding: 13px 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+      letter-spacing: 0.5px;
+      width: 100%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border: none;
+      transition: all 0.2s;
+    }
+    .btn-send-main:hover {
+      background: linear-gradient(135deg, #047857 0%, #059669 100%);
+      box-shadow: 0 6px 20px rgba(16, 185, 129, 0.6);
+      transform: translateY(-1px);
+    }
+    .btn-send-main:active {
+      transform: translateY(0);
+    }
+    .btn-send-main:disabled {
+      background: #475569;
+      box-shadow: none;
+      cursor: not-allowed;
+      opacity: 0.65;
+      transform: none;
+    }
+
+    .btn {
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-stop {
+      background: #e11d48;
+      color: white;
+    }
+    .btn-stop:hover {
+      background: #be123c;
+    }
+    .btn-stop:disabled {
+      background: #475569;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+    }
+    .btn-secondary:hover {
+      background: #334155;
+    }
+
+    /* 卡片通用 */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 22px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+      margin-bottom: 24px;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 18px;
+    }
+
+    .card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card-subtitle {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }
+
+    /* ============================================================
+       32-COLUMN CSS GRID PROTOCOL VISUALIZER (完美對照題目圖例)
+       ============================================================ */
+    .protocol-header-container {
+      background: #090d18;
+      border: 2px solid #334155;
+      border-radius: 8px;
+      padding: 12px;
+      overflow-x: auto;
+    }
+
+    /* 32-bit 位元刻度尺 (0 ~ 31) */
+    .bit-ruler-32 {
+      display: grid;
+      grid-template-columns: repeat(32, 1fr);
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: #f43f5e;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 6px;
+      user-select: none;
+      padding-bottom: 4px;
+      border-bottom: 2px solid #e11d48;
+    }
+
+    .bit-ruler-32 span {
+      display: block;
+    }
+
+    /* 32-column IPv4 Header Grid */
+    .ipv4-grid-32 {
+      display: grid;
+      grid-template-columns: repeat(32, 1fr);
+      gap: 2px;
+      background: #1e293b;
+      border: 2px solid #475569;
+      font-family: var(--font-mono);
+    }
+
+    .grid-cell {
+      background: #0f172a;
+      padding: 10px 4px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      border: 1px solid rgba(71, 85, 105, 0.4);
+      position: relative;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .grid-cell:hover {
+      filter: brightness(1.25);
+      outline: 2px solid #38bdf8;
+      z-index: 5;
+    }
+
+    .cell-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .cell-bits {
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      margin-top: 1px;
+    }
+
+    .cell-val {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-top: 4px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      word-break: break-all;
+    }
+
+    /* 格子色彩樣式 */
+    /* 1. 使用者指定 (綠色系) */
+    .cell-user-input {
+      background: rgba(16, 185, 129, 0.12);
+      border-color: rgba(16, 185, 129, 0.5) !important;
+    }
+    .cell-user-input .cell-title { color: #34d399; }
+    .cell-user-input .cell-val {
+      color: #6ee7b7;
+      background: rgba(16, 185, 129, 0.25);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    /* 2. 自動連動計算 (亮藍色系) */
+    .cell-auto-calc {
+      background: rgba(2, 132, 199, 0.16);
+      border-color: rgba(56, 189, 248, 0.5) !important;
+    }
+    .cell-auto-calc .cell-title { color: #38bdf8; }
+    .cell-auto-calc .cell-val {
+      color: #7dd3fc;
+      background: rgba(56, 189, 248, 0.25);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+    }
+
+    /* 3. 協定固定值 (灰色系) */
+    .cell-standard-fixed {
+      background: rgba(30, 41, 59, 0.6);
+    }
+    .cell-standard-fixed .cell-title { color: #cbd5e1; }
+    .cell-standard-fixed .cell-val { color: #94a3b8; }
+
+    /* 第 6 列 Options */
+    .cell-options {
+      grid-column: span 32;
+      background: rgba(51, 65, 85, 0.25);
+      color: var(--text-muted);
+      padding: 8px 12px;
+      font-size: 0.8rem;
+      display: flex;
+      flex-direction: row;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      border-top: 1px dashed #475569;
+    }
+
+    /* ICMP 32-column Grid */
+    .icmp-grid-32 {
+      display: grid;
+      grid-template-columns: repeat(32, 1fr);
+      gap: 2px;
+      background: #1e293b;
+      border: 2px solid #8b5cf6;
+      font-family: var(--font-mono);
+      margin-top: 8px;
+    }
+
+    /* 連動推導與公式展示卡片 */
+    .derivation-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .derivation-box {
+      background: #090e1a;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .derivation-header {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: #cbd5e1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .math-formula {
+      background: #131d31;
+      border-left: 4px solid #0284c7;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: #38bdf8;
+      font-weight: 600;
+    }
+
+    .derivation-text {
+      font-size: 0.82rem;
+      color: #94a3b8;
+      line-height: 1.45;
+    }
+
+    /* Checksum 逐字累加詳細展開 */
+    .checksum-calc-detail {
+      background: #060911;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 14px;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: #94a3b8;
+      max-height: 220px;
+      overflow-y: auto;
+      margin-top: 12px;
+      line-height: 1.6;
+    }
+
+    /* 模擬終端機樣式 */
+    .terminal-container {
+      background: #050811;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      font-family: var(--font-mono);
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+    }
+
+    .terminal-header {
+      background: #131d31;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #334155;
+    }
+
+    .terminal-controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+    .dot-red { background: #ef4444; }
+    .dot-yellow { background: #eab308; }
+    .dot-green { background: #22c55e; }
+
+    .terminal-title {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .terminal-body {
+      padding: 18px;
+      min-height: 220px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-size: 0.88rem;
+      line-height: 1.65;
+    }
+
+    .terminal-line {
+      margin-bottom: 2px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .term-prompt { color: #38bdf8; font-weight: bold; }
+    .term-reply { color: #f8fafc; }
+    .term-warn { color: #fbbf24; font-weight: 600; }
+    .term-err { color: #f87171; }
+    .term-stat { color: #c084fc; font-weight: bold; }
+
+    /* 標籤頁 (Hex Dump / Python / C) */
+    .tabs {
+      display: flex;
+      gap: 10px;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 14px;
+    }
+
+    .tab-btn {
+      background: transparent;
+      color: var(--text-muted);
+      border: none;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-size: 0.88rem;
+      border-bottom: 2px solid transparent;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .tab-btn.active {
+      color: #38bdf8;
+      border-bottom-color: #38bdf8;
+    }
+
+    .code-preview {
+      background: #090e1a;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 16px;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: #cbd5e1;
+      overflow-x: auto;
+      max-height: 260px;
+      line-height: 1.5;
+    }
+
+    /* 欄位點擊詳細說明彈窗 */
+    .field-info-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      z-index: 999;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .modal-card {
+      background: var(--bg-card);
+      border: 1px solid #38bdf8;
+      box-shadow: 0 10px 40px rgba(56, 189, 248, 0.2);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 580px;
+      padding: 24px;
+      position: relative;
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 16px;
+      right: 18px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.4rem;
+      cursor: pointer;
+    }
+
+    .modal-close:hover {
+      color: #f87171;
+    }
+
+    .modal-header {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #38bdf8;
+      margin-bottom: 12px;
+    }
+
+    .modal-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+    }
+
+    .modal-table td {
+      padding: 6px 10px;
+      border: 1px solid var(--border-color);
+    }
+
+    .modal-table td:first-child {
+      background: #090e1a;
+      font-weight: 600;
+      color: #94a3b8;
+      width: 32%;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- 頂部標題與快速範本 -->
+    <header>
+      <div class="header-title">
+        <h1>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+          IPv4 / ICMP Ping 協定分析與封包產生器
+        </h1>
+        <p>指定目的地 IP、Data 長度、TTL，即時連動 IPv4 標頭各欄位數值與 Checksum 計算</p>
+      </div>
+
+      <div class="preset-group">
+        <label for="presetSelect">📌 常用預設情境：</label>
+        <select id="presetSelect" onchange="applyPreset(this.value)">
+          <option value="google_dns" selected>Google DNS (8.8.8.8, 32B Data, TTL 64)</option>
+          <option value="cloudflare">Cloudflare DNS (1.1.1.1, 56B Data, TTL 64)</option>
+          <option value="windows_default">Windows 預設 Ping (32B Data, TTL 128)</option>
+          <option value="linux_default">Linux 預設 Ping (56B Data, TTL 64)</option>
+          <option value="ttl_expired">TTL 超時測試 (TTL=1, 模擬 Traceroute)</option>
+          <option value="large_mtu">MTU 最大未分段封包 (1472B Data, DF=1)</option>
+        </select>
+      </div>
+    </header>
+
+    <!-- 本機 IP 自動偵測與後端狀態列 -->
+    <div class="network-status-bar" id="networkStatusBar">
+      <div class="status-left">
+        <span class="status-indicator-dot" id="serverStatusDot"></span>
+        <span id="serverStatusTitle" style="font-weight: 700;">正在偵測真實 Ping 後端服務...</span>
+        <span class="status-ip-pill" id="detectedIpPill">本機 IP: 偵測中...</span>
+      </div>
+      <div class="status-right" style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 0.8rem; color: #94a3b8;" id="backendActionHint">
+          真實 Ping 需後端支援：請執行 <code style="color: #38bdf8;">node server.js</code> 或雙擊 <code style="color: #38bdf8;">啟動Ping伺服器.bat</code>
+        </span>
+        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;" onclick="fetchUserIpAndCheckBackend(true)">重新偵測</button>
+      </div>
+    </div>
+
+    <!-- 視覺圖例指示列 -->
+    <div class="legend-bar">
+      <div class="legend-item">
+        <span class="legend-badge badge-user"></span>
+        <span><strong>綠色欄位</strong>：使用者指定 (Destination IP, Data Length, TTL)</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-badge badge-calc"></span>
+        <span><strong>藍色欄位</strong>：自動連動計算 (Total Length, Header Checksum, ICMP Checksum 等)</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-badge badge-fixed"></span>
+        <span><strong>灰色欄位</strong>：IPv4 / ICMP 協定規範固定值 (VER=4, HLEN=5, Protocol=1 等)</span>
+      </div>
+      <div style="margin-left: auto; font-size: 0.8rem; color: #94a3b8;">
+        💡 提示：點擊右側封包圖中任何欄位，可查看該欄位的詳細位元與 RFC 規格說明
+      </div>
+    </div>
+
+    <!-- 主要排版區域 -->
+    <div class="layout-grid">
+      <!-- 左側：輸入控制面板 -->
+      <aside class="control-panel">
+        <div class="panel-section-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          指定 Ping 參數
+        </div>
+
+        <!-- 1. 目的地 IP -->
+        <div class="form-group">
+          <label for="destIp">
+            <span>目的地 IP (Destination IP)</span>
+            <span class="badge-tag badge-tag-user">使用者指定</span>
+          </label>
+          <input type="text" id="destIp" value="8.8.8.8" placeholder="例如: 8.8.8.8 或 1.1.1.1" oninput="onParamsChange('destIp')">
+          <span class="hint">更新第 5 列 Destination IP (32 bits) 並連動重新計算 Header Checksum</span>
+        </div>
+
+        <!-- 2. Data 長度 -->
+        <div class="form-group">
+          <label for="dataLen">
+            <span>Data 資料長度 (Bytes)</span>
+            <span class="badge-tag badge-tag-user">使用者指定</span>
+          </label>
+          <input type="number" id="dataLen" value="32" min="0" max="65507" oninput="onParamsChange('dataLen')">
+          <span class="hint">連動 Total Length = 20 (IP標頭) + 8 (ICMP標頭) + Data 長度，並重算 Checksum</span>
+        </div>
+
+        <!-- 3. TTL (Time to Live) -->
+        <div class="form-group">
+          <label for="ttlVal">
+            <span>Time to live (TTL)</span>
+            <span class="badge-tag badge-tag-user">使用者指定</span>
+          </label>
+          <input type="number" id="ttlVal" value="64" min="1" max="255" oninput="onParamsChange('ttlVal')">
+          <span class="hint">範圍 1~255。更新第 3 列 TTL (8 bits) 並連動重新計算 Header Checksum</span>
+        </div>
+
+        <!-- 進階參數設定 (可展開) -->
+        <div>
+          <div class="accordion-header" onclick="toggleAdvancedSettings()">
+            <span>⚙️ 來源 IP 與進階標頭設定</span>
+            <span id="accordionArrow">▼</span>
+          </div>
+          <div class="accordion-content" id="advancedContent">
+            <div class="form-group">
+              <label for="srcIp">來源 IP (Source IP)</label>
+              <input type="text" id="srcIp" value="172.16.70.129" oninput="onParamsChange('srcIp')">
+              <span class="hint">系統自動偵測並帶入本機 IP，亦可手動指定</span>
+            </div>
+            <div class="form-group">
+              <label for="ipId">封包識別碼 (Identification, Hex)</label>
+              <input type="text" id="ipId" value="0x4E21" oninput="onParamsChange()">
+            </div>
+            <div class="form-group">
+              <label for="flagDf">DF (Don't Fragment) 標記</label>
+              <select id="flagDf" onchange="onParamsChange()">
+                <option value="1" selected>DF = 1 (不允許分段 - Ping 預設)</option>
+                <option value="0">DF = 0 (允許分段)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="tosVal">服務類型 (Type of Service / DSCP)</label>
+              <input type="number" id="tosVal" value="0" min="0" max="255" oninput="onParamsChange()">
+            </div>
+          </div>
+        </div>
+
+        <!-- 執行控制按鈕區塊 -->
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 6px;">
+          <!-- 核心「送出」按鈕 -->
+          <button class="btn-send-main" id="btnSendPing" onclick="handleSendPingClick()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+            <span id="btnSendText">送出 Ping 封包 (Send)</span>
+          </button>
+
+          <!-- 送出模式與停止控制 -->
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <div style="flex: 1;">
+              <select id="sendModeSelect" onchange="onSendModeChange()" style="width: 100%; font-size: 0.82rem; padding: 7px 8px;">
+                <option value="1" selected>單次送出 (按一下送 1 封包)</option>
+                <option value="4">批次送出 4 次 (Windows 標準)</option>
+                <option value="continuous">連續送出 (手動按停止)</option>
+              </select>
+            </div>
+            <button class="btn btn-stop" id="btnStopPing" onclick="stopPing()" disabled style="flex: 0 0 75px; padding: 7px 10px; font-size: 0.82rem; display: none;">
+              停止
+            </button>
+          </div>
+          
+          <div style="font-size: 0.74rem; color: #94a3b8; text-align: center; line-height: 1.4;">
+            設定好目的地 IP、Data 長度與 TTL 後，點擊上方<strong>「送出」</strong>即可發送
+          </div>
+        </div>
+      </aside>
+
+      <!-- 右側：標頭格式圖與連動運算展示 -->
+      <main>
+        
+        <!-- IPv4 標頭格式 (32 位元網格視覺化，完全對齊教科書圖片) -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                IPv4 標頭格式 (IPv4 Header Format — 32 bits per row)
+              </div>
+              <div class="card-subtitle">依據 RFC 791 規範，每橫列固定 32 位元 (4 位元組)，共 5 列標準標頭 (20 位元組)</div>
+            </div>
+          </div>
+
+          <div class="protocol-header-container">
+            <!-- 32-bit 位元刻度尺 (0 ~ 31) -->
+            <div class="bit-ruler-32">
+              <span>0</span><span>1</span><span>2</span><span>3</span>
+              <span>4</span><span>5</span><span>6</span><span>7</span>
+              <span>8</span><span>9</span><span>10</span><span>11</span>
+              <span>12</span><span>13</span><span>14</span><span>15</span>
+              <span>16</span><span>17</span><span>18</span><span>19</span>
+              <span>20</span><span>21</span><span>22</span><span>23</span>
+              <span>24</span><span>25</span><span>26</span><span>27</span>
+              <span>28</span><span>29</span><span>30</span><span>31</span>
+            </div>
+
+            <!-- 32-column IPv4 Header Grid -->
+            <div class="ipv4-grid-32">
+              
+              <!-- 第一列: VER (4 bits) | HLEN (4 bits) | Service type (8 bits) | Total length (16 bits) -->
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 4;" onclick="inspectField('VER')" title="點擊查看詳細說明">
+                <span class="cell-title">VER</span>
+                <span class="cell-bits">4 bits</span>
+                <span class="cell-val" id="valVer">4</span>
+              </div>
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 4;" onclick="inspectField('HLEN')" title="點擊查看詳細說明">
+                <span class="cell-title">HLEN</span>
+                <span class="cell-bits">4 bits</span>
+                <span class="cell-val" id="valHlen">5 (20B)</span>
+              </div>
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 8;" onclick="inspectField('TOS')" title="點擊查看詳細說明">
+                <span class="cell-title">Service type</span>
+                <span class="cell-bits">8 bits</span>
+                <span class="cell-val" id="valTos">0x00</span>
+              </div>
+              <div class="grid-cell cell-auto-calc" style="grid-column: span 16;" onclick="inspectField('TOTAL_LEN')" title="隨 Data 長度自動連動計算！">
+                <span class="cell-title">Total length [連動計算]</span>
+                <span class="cell-bits">16 bits</span>
+                <span class="cell-val" id="valTotalLen">60 Bytes (0x003C)</span>
+              </div>
+
+              <!-- 第二列: Identification (16 bits) | Flags (3 bits) | Fragmentation offset (13 bits) -->
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 16;" onclick="inspectField('ID')" title="點擊查看詳細說明">
+                <span class="cell-title">Identification</span>
+                <span class="cell-bits">16 bits</span>
+                <span class="cell-val" id="valId">0x4E21</span>
+              </div>
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 3;" onclick="inspectField('FLAGS')" title="點擊查看詳細說明">
+                <span class="cell-title">Flags</span>
+                <span class="cell-bits">3 bits</span>
+                <span class="cell-val" id="valFlags">010 (DF)</span>
+              </div>
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 13;" onclick="inspectField('OFFSET')" title="點擊查看詳細說明">
+                <span class="cell-title">Fragmentation offset</span>
+                <span class="cell-bits">13 bits</span>
+                <span class="cell-val" id="valFragOffset">0</span>
+              </div>
+
+              <!-- 第三列: Time to live (8 bits) | Protocol (8 bits) | Header checksum (16 bits) -->
+              <div class="grid-cell cell-user-input" style="grid-column: span 8;" onclick="inspectField('TTL')" title="使用者直接指定！">
+                <span class="cell-title">Time to live [指定]</span>
+                <span class="cell-bits">8 bits</span>
+                <span class="cell-val" id="valTtl">64 (0x40)</span>
+              </div>
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 8;" onclick="inspectField('PROTOCOL')" title="點擊查看詳細說明">
+                <span class="cell-title">Protocol</span>
+                <span class="cell-bits">8 bits</span>
+                <span class="cell-val" id="valProtocol">1 (ICMP)</span>
+              </div>
+              <div class="grid-cell cell-auto-calc" style="grid-column: span 16;" onclick="inspectField('CHECKSUM')" title="隨全部標頭欄位自動重新計算！">
+                <span class="cell-title">Header checksum [連動計算]</span>
+                <span class="cell-bits">16 bits</span>
+                <span class="cell-val" id="valChecksum">0x0000</span>
+              </div>
+
+              <!-- 第四列: Source IP address (32 bits) -->
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 32;" onclick="inspectField('SRC_IP')" title="點擊查看詳細說明">
+                <span class="cell-title">Source IP address [自動偵測]</span>
+                <span class="cell-bits">32 bits</span>
+                <span class="cell-val" id="valSrcIp">172.16.70.129</span>
+              </div>
+
+              <!-- 第五列: Destination IP address (32 bits) -->
+              <div class="grid-cell cell-user-input" style="grid-column: span 32;" onclick="inspectField('DEST_IP')" title="使用者直接指定！">
+                <span class="cell-title">Destination IP address [使用者指定]</span>
+                <span class="cell-bits">32 bits</span>
+                <span class="cell-val" id="valDestIp">8.8.8.8 (0x08080808)</span>
+              </div>
+
+              <!-- 第六列: Options + padding (0 to 40 bytes) -->
+              <div class="cell-options" onclick="inspectField('OPTIONS')">
+                <span style="font-weight: 700;">Options + padding</span>
+                <span>(0 to 40 bytes)</span>
+                <span style="color: var(--text-dim);">— [標準 Ping 封包無選項，長度為 0 位元組]</span>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- 即時連動計算公式卡片 -->
+          <div class="derivation-container">
+            <div class="derivation-box">
+              <div class="derivation-header">
+                <span class="legend-badge badge-calc"></span>
+                <span>Total Length (總長度) 即時連動計算</span>
+              </div>
+              <div class="math-formula" id="calcFormulaTotalLen">
+                Total Length = 20(IP) + 8(ICMP) + 32(Data) = 60 Bytes
+              </div>
+              <p class="derivation-text">
+                當您在左側調整 <strong>Data 長度</strong> 時，IPv4 總長度欄位將自動累計「20 位元組 IPv4 標頭」與「8 位元組 ICMP 標頭」，並轉為 16-bit 填入標頭第 16~31 位元。
+              </p>
+            </div>
+
+            <div class="derivation-box">
+              <div class="derivation-header">
+                <span class="legend-badge badge-calc"></span>
+                <span>Header Checksum (標頭校驗和) RFC 791 運算</span>
+              </div>
+              <div class="math-formula" id="calcFormulaChecksum">
+                Checksum = ~[ Σ(16-bit Words) ] = 0x....
+              </div>
+              <p class="derivation-text">
+                當 <strong>TTL、目的地 IP、Data 長度（影響總長度）</strong> 任一被更改時，程式將標頭拆分為 10 個 16-bit Words 進行反相累加 (Ones' complement sum) 即時更新校驗和。
+              </p>
+            </div>
+          </div>
+
+          <!-- Checksum 計算推導步驟詳細展示 -->
+          <div style="margin-top: 14px;">
+            <div class="accordion-header" onclick="toggleChecksumDetails()">
+              <span>🔍 點此展開/收合：RFC 791 IPv4 Header Checksum 逐字 (16-bit Words) 累加運算細節</span>
+              <span id="csArrow">▼</span>
+            </div>
+            <div class="checksum-calc-detail" id="checksumDetailsBox" style="display: none;">
+              <!-- 動態填充計算過程 -->
+            </div>
+          </div>
+        </div>
+
+        <!-- ICMP 封包結構與負載 -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2.2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                ICMP Echo Request (Ping) 標頭與負載 (32 bits per row)
+              </div>
+              <div class="card-subtitle">封裝在 IPv4 負載中，包含 8 位元組 ICMP 標頭與使用者指定長度的資料</div>
+            </div>
+          </div>
+
+          <div class="protocol-header-container">
+            <!-- 32-bit ruler for ICMP -->
+            <div class="bit-ruler-32" style="border-bottom-color: #8b5cf6; color: #a855f7;">
+              <span>0</span><span>1</span><span>2</span><span>3</span>
+              <span>4</span><span>5</span><span>6</span><span>7</span>
+              <span>8</span><span>9</span><span>10</span><span>11</span>
+              <span>12</span><span>13</span><span>14</span><span>15</span>
+              <span>16</span><span>17</span><span>18</span><span>19</span>
+              <span>20</span><span>21</span><span>22</span><span>23</span>
+              <span>24</span><span>25</span><span>26</span><span>27</span>
+              <span>28</span><span>29</span><span>30</span><span>31</span>
+            </div>
+
+            <div class="icmp-grid-32">
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 8;">
+                <span class="cell-title">Type</span>
+                <span class="cell-bits">8 bits</span>
+                <span class="cell-val">8 (Echo Request)</span>
+              </div>
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 8;">
+                <span class="cell-title">Code</span>
+                <span class="cell-bits">8 bits</span>
+                <span class="cell-val">0</span>
+              </div>
+              <div class="grid-cell cell-auto-calc" style="grid-column: span 16;">
+                <span class="cell-title">ICMP Checksum [連動計算]</span>
+                <span class="cell-bits">16 bits</span>
+                <span class="cell-val" id="valIcmpChecksum">0x0000</span>
+              </div>
+
+              <div class="grid-cell cell-standard-fixed" style="grid-column: span 16;">
+                <span class="cell-title">Identifier</span>
+                <span class="cell-bits">16 bits</span>
+                <span class="cell-val" id="valIcmpId">0x4E21</span>
+              </div>
+              <div class="grid-cell cell-auto-calc" style="grid-column: span 16;">
+                <span class="cell-title">Sequence Number [發送時累加]</span>
+                <span class="cell-bits">16 bits</span>
+                <span class="cell-val" id="valIcmpSeq">1</span>
+              </div>
+
+              <!-- Data payload -->
+              <div class="grid-cell cell-user-input" style="grid-column: span 32; text-align: left; padding: 12px 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 6px;">
+                  <span class="cell-title" style="margin: 0;">Data Payload (負載資料內容)</span>
+                  <span class="badge-tag badge-tag-user" id="payloadLengthBadge">長度: 32 Bytes</span>
+                </div>
+                <div style="font-size: 0.82rem; color: #a7f3d0; word-break: break-all; background: rgba(0,0,0,0.35); padding: 8px 12px; border-radius: 6px; width: 100%;" id="valPayloadPreview">
+                  61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f 70 71 72 73 74 75 76 77 61 62 63 64 65 66 67 68 69
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ping 軟體執行終端機 -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+                Ping 軟體執行終端機 (Ping Simulator & Terminal)
+              </div>
+              <div class="card-subtitle">模擬/真實發送 ICMP 封包、TTL 遞減與逾時機制、往返時間 RTT 測量</div>
+            </div>
+            <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 0.78rem;" onclick="clearTerminal()">清除輸出</button>
+          </div>
+
+          <div class="terminal-container">
+            <div class="terminal-header">
+              <div class="terminal-controls">
+                <div class="terminal-dot dot-red"></div>
+                <div class="terminal-dot dot-yellow"></div>
+                <div class="terminal-dot dot-green"></div>
+              </div>
+              <div class="terminal-title">ping.exe — ICMP Echo Protocol Console</div>
+              <div style="font-size: 0.72rem; font-weight: 700; color: #64748b;" id="pingStatusText">IDLE</div>
+            </div>
+            <div class="terminal-body" id="terminalOutput">
+              <div class="terminal-line"><span class="term-prompt">antigravity-ping&gt;</span> 準備就緒。請在左側指定目的地 IP、Data 長度與 TTL，設定完成後點擊<strong>「送出 Ping 封包」</strong>按鈕發送。</div>
+              <div class="terminal-line" style="color: #64748b;">💡 實作特色：按一次「送出」發送一個封包（亦可切換批次送出 4 次）。若將 TTL 設為 1，將模擬路由器回傳 TTL 超時！</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 封包原始資料與程式碼實作匯出 -->
+        <div class="card">
+          <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('hexTab', this)">Wireshark Hex Dump</button>
+            <button class="tab-btn" onclick="switchTab('pythonTab', this)">Python 實作程式碼 (Raw Socket)</button>
+            <button class="tab-btn" onclick="switchTab('cTab', this)">C 語言實作程式碼</button>
+          </div>
+
+          <div id="hexTab">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span style="font-size: 0.82rem; color: var(--text-muted);">完整的二進位封包 Hex 數據 (可直接複製存入文字檔並透過 Wireshark "Import from Hex Dump" 匯入分析)：</span>
+              <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.78rem;" onclick="copyHexDump()">複製 Hex</button>
+            </div>
+            <pre class="code-preview" id="hexViewerContent">--</pre>
+          </div>
+
+          <div id="pythonTab" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span style="font-size: 0.82rem; color: var(--text-muted);">使用 Python struct 與 raw socket 發送此封包的腳本：</span>
+              <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.78rem;" onclick="copyCode('pythonCodeContent')">複製程式碼</button>
+            </div>
+            <pre class="code-preview" id="pythonCodeContent"></pre>
+          </div>
+
+          <div id="cTab" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span style="font-size: 0.82rem; color: var(--text-muted);">使用 C 語言 (Winsock2 / POSIX) 建立與計算此封包的程式碼：</span>
+              <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.78rem;" onclick="copyCode('cCodeContent')">複製程式碼</button>
+            </div>
+            <pre class="code-preview" id="cCodeContent"></pre>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- 點擊欄位彈出的詳細說明模態框 -->
+  <div class="field-info-modal" id="fieldInfoModal" onclick="closeModalOnBackdrop(event)">
+    <div class="modal-card">
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+      <div class="modal-header" id="modalTitle">欄位名稱</div>
+      <p style="font-size: 0.88rem; color: #cbd5e1; margin-bottom: 12px;" id="modalDesc">欄位說明文字</p>
+      
+      <table class="modal-table">
+        <tbody>
+          <tr>
+            <td>位元長度</td>
+            <td id="modalBits">--</td>
+          </tr>
+          <tr>
+            <td>十進位數值</td>
+            <td id="modalDec">--</td>
+          </tr>
+          <tr>
+            <td>十六進位 (Hex)</td>
+            <td id="modalHex">--</td>
+          </tr>
+          <tr>
+            <td>二進位 (Binary)</td>
+            <td id="modalBin">--</td>
+          </tr>
+          <tr>
+            <td>連動關係</td>
+            <td id="modalRelation" style="color: #38bdf8;">--</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // 全域狀態變數
+    let pingIntervalId = null;
+    let isPinging = false;
+    let pingSeq = 1;
+    let pingStats = {
+      sent: 0,
+      received: 0,
+      times: []
+    };
+    let currentTargetIp = "";
+    let isBackendOnline = false;
+    let userLocalIp = "172.16.70.129";
+    let userInterfaceName = "Wi-Fi";
+
+    // 常用預設情境
+    const presets = {
+      google_dns: { destIp: "8.8.8.8", dataLen: 32, ttl: 64 },
+      cloudflare: { destIp: "1.1.1.1", dataLen: 56, ttl: 64 },
+      windows_default: { destIp: "8.8.8.8", dataLen: 32, ttl: 128 },
+      linux_default: { destIp: "8.8.8.8", dataLen: 56, ttl: 64 },
+      ttl_expired: { destIp: "8.8.8.8", dataLen: 32, ttl: 1 },
+      large_mtu: { destIp: "8.8.8.8", dataLen: 1472, ttl: 64 }
+    };
+
+    // 欄位規格字典 (供點擊時彈出說明)
+    const fieldDefinitions = {
+      VER: {
+        name: "VER (Version, 版本號)",
+        bits: "4 bits (位元 0 ~ 3)",
+        desc: "指定使用之 IP 協定版本。IPv4 規定此欄位固定填入 4 (二進位 0100)。",
+        relation: "協定固定值，不隨使用者輸入改變。"
+      },
+      HLEN: {
+        name: "HLEN (Header Length, 標頭長度)",
+        bits: "4 bits (位元 4 ~ 7)",
+        desc: "以 32-bit (4 bytes) 為一單位計算 IP 標頭長度。標準 IPv4 標頭無選項時為 20 位元組，因此 HLEN = 20 / 4 = 5 (二進位 0101)。",
+        relation: "標準 Ping 封包無額外選項時固定為 5 (20 Bytes)。"
+      },
+      TOS: {
+        name: "Service type (Type of Service / DSCP)",
+        bits: "8 bits (位元 8 ~ 15)",
+        desc: "指定封包之服務品質 (QoS) 優先權或 DSCP/ECN。Ping 預設通常為 0x00 (Best Effort)。",
+        relation: "可在進階選項中手動調整。"
+      },
+      TOTAL_LEN: {
+        name: "Total length (總長度)",
+        bits: "16 bits (位元 16 ~ 31)",
+        desc: "整個 IPv4 封包之總位元組長度 (包含 IP 標頭 + 負載)。以 16 位元無號整數儲存，理論最大為 65,535 位元組。",
+        relation: "⚡ 自動連動計算：20 (IPv4標頭) + 8 (ICMP標頭) + [您指定的 Data 長度]。"
+      },
+      ID: {
+        name: "Identification (識別碼)",
+        bits: "16 bits (位元 0 ~ 15)",
+        desc: "用來識別同一個原始封包的所有分段，接收端透過此 ID 將分段重組為完整封包。",
+        relation: "每發出一個新 Ping 封包可遞增或固定。"
+      },
+      FLAGS: {
+        name: "Flags (旗標)",
+        bits: "3 bits (位元 16 ~ 18)",
+        desc: "包含保留位 (bit 0, 恆為 0)、DF (Don't Fragment, bit 1) 與 MF (More Fragments, bit 2)。Ping 預設常設定 DF=1 (010)。",
+        relation: "可在進階設定中勾選 DF。"
+      },
+      OFFSET: {
+        name: "Fragmentation offset (分段偏移量)",
+        bits: "13 bits (位元 19 ~ 31)",
+        desc: "表示此分段資料在原始資料報中的相對位置 (以 8 位元組為單位)。未分段封包恆為 0。",
+        relation: "未分段時恆為 0。"
+      },
+      TTL: {
+        name: "Time to live (存活時間)",
+        bits: "8 bits (位元 0 ~ 7)",
+        desc: "防止封包在網路上無限循環。每經過一個路由器 (Hop)，TTL 即減 1。當減為 0 時，路由器將拋棄該封包並向來源端回送 ICMP Time Exceeded (Type 11)。",
+        relation: "🟢 使用者直接指定！變更後會連帶觸發 Header Checksum 重算。"
+      },
+      PROTOCOL: {
+        name: "Protocol (協定號碼)",
+        bits: "8 bits (位元 8 ~ 15)",
+        desc: "指定 IPv4 負載中封裝的傳輸層或控制協定。ICMP (Internet Control Message Protocol) 的協定號碼標準規範為 1 (0x01)。",
+        relation: "實作 Ping 封包固定為 1 (ICMP)。"
+      },
+      CHECKSUM: {
+        name: "Header checksum (標頭校驗和)",
+        bits: "16 bits (位元 16 ~ 31)",
+        desc: "僅驗證 IPv4 標頭的完整性 (不含負載)。依據 RFC 791 將標頭切割為 16-bit 字累加後取反相補數。",
+        relation: "⚡ 自動連動計算：當 TTL、目的地 IP、總長度發生任何改變時，立即自動重新計算！"
+      },
+      SRC_IP: {
+        name: "Source IP address (來源 IP 位址)",
+        bits: "32 bits (4 Bytes)",
+        desc: "發送端本機的 IPv4 位址，共 32 位元。",
+        relation: "系統自動抓取您本機 IP，亦可在進階設定中手動修改。"
+      },
+      DEST_IP: {
+        name: "Destination IP address (目的地 IP 位址)",
+        bits: "32 bits (4 Bytes)",
+        desc: "ICMP Echo Request 接收端的 IPv4 位址，共 32 位元。",
+        relation: "🟢 使用者直接指定！變更後會連帶觸發 Header Checksum 重算。"
+      },
+      OPTIONS: {
+        name: "Options + padding (選項與填補)",
+        bits: "0 to 40 bytes",
+        desc: "提供網路除錯、安全標籤或路由記錄等額外功能。由於長度必須為 32 位元的整數倍，不足處以 0 填補。",
+        relation: "標準 Ping 封包無選項，長度為 0 位元組。"
+      }
+    };
+
+    function applyPreset(presetKey) {
+      if (presets[presetKey]) {
+        document.getElementById("destIp").value = presets[presetKey].destIp;
+        document.getElementById("dataLen").value = presets[presetKey].dataLen;
+        document.getElementById("ttlVal").value = presets[presetKey].ttl;
+        onParamsChange();
+      }
+    }
+
+    function toggleAdvancedSettings() {
+      const content = document.getElementById("advancedContent");
+      const arrow = document.getElementById("accordionArrow");
+      if (content.classList.contains("show")) {
+        content.classList.remove("show");
+        arrow.textContent = "▼";
+      } else {
+        content.classList.add("show");
+        arrow.textContent = "▲";
+      }
+    }
+
+    function toggleChecksumDetails() {
+      const box = document.getElementById("checksumDetailsBox");
+      const arrow = document.getElementById("csArrow");
+      if (box.style.display === "none") {
+        box.style.display = "block";
+        arrow.textContent = "▲";
+      } else {
+        box.style.display = "none";
+        arrow.textContent = "▼";
+      }
+    }
+
+    // 自動偵測本機真實 IP 位址並檢查後端服務
+    async function fetchUserIpAndCheckBackend(showToast = false) {
+      const dot = document.getElementById("serverStatusDot");
+      const title = document.getElementById("serverStatusTitle");
+      const ipPill = document.getElementById("detectedIpPill");
+
+      try {
+        const res = await fetch("http://localhost:3000/api/my-ip", {
+          signal: AbortSignal.timeout(2000)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          isBackendOnline = true;
+          userLocalIp = data.primaryIp || "127.0.0.1";
+          userInterfaceName = data.primaryInterface || "乙太網路/Wi-Fi";
+
+          dot.className = "status-indicator-dot online";
+          title.innerHTML = `🟢 <strong>真實 Ping 後端已連線</strong> (Windows 原生 ICMP 就緒)`;
+          ipPill.textContent = `本機 IP: ${userLocalIp} (${userInterfaceName})`;
+
+          // 自動填入來源 IP 欄位並觸發 Header Checksum 重算
+          document.getElementById("srcIp").value = userLocalIp;
+          onParamsChange();
+
+          if (showToast) {
+            appendTerminalLine(`[系統] 已連線至本機 Ping 服務，自動抓取本機真實 IP：${userLocalIp} (${userInterfaceName})，已同步套用至 IPv4 來源 IP 標頭！`, "term-prompt");
+          }
+          return;
+        }
+      } catch (err) {
+        // 後端伺服器未開啟
+      }
+
+      isBackendOnline = false;
+      dot.className = "status-indicator-dot offline";
+      title.innerHTML = `🔴 <strong>真實 Ping 後端未啟動</strong> (需啟動後端)`;
+      ipPill.textContent = `本機 IP: ${userLocalIp}`;
+      document.getElementById("srcIp").value = userLocalIp;
+      onParamsChange();
+
+      // 嘗試透過 WebRTC 回退探測本機 IP
+      tryFetchIpFromWebRTC((ip) => {
+        if (ip) {
+          userLocalIp = ip;
+          ipPill.textContent = `本機 IP (WebRTC): ${userLocalIp}`;
+          document.getElementById("srcIp").value = userLocalIp;
+          onParamsChange();
+        }
+      });
+
+      if (showToast) {
+        appendTerminalLine(`[提示] 真實 Ping 後端尚未連線。請至專案資料夾點擊「啟動Ping伺服器.bat」或執行 node server.js！`, "term-warn");
+      }
+    }
+
+    // WebRTC 瀏覽器本地 IP 探測方案
+    function tryFetchIpFromWebRTC(callback) {
+      try {
+        const rtc = new RTCPeerConnection({ iceServers: [] });
+        rtc.createDataChannel('');
+        rtc.createOffer().then(offer => rtc.setLocalDescription(offer)).catch(() => {});
+        rtc.onicecandidate = (evt) => {
+          if (evt && evt.candidate && evt.candidate.candidate) {
+            const parts = evt.candidate.candidate.split(' ');
+            const ip = parts[4];
+            if (ip && ip.indexOf('.') !== -1 && !ip.endsWith('.local')) {
+              callback(ip);
+              rtc.close();
+              return;
+            }
+          }
+        };
+        setTimeout(() => { callback(null); }, 1500);
+      } catch (e) {
+        callback(null);
+      }
+    }
+
+    // IP 字串轉為 32 位元整數 (Big Endian)
+    function ipToInt(ipStr) {
+      const parts = ipStr.trim().split('.');
+      if (parts.length !== 4) return 0;
+      let val = 0;
+      for (let i = 0; i < 4; i++) {
+        const byte = parseInt(parts[i], 10);
+        if (isNaN(byte) || byte < 0 || byte > 255) return 0;
+        val = ((val << 8) | byte) >>> 0;
+      }
+      return val;
+    }
+
+    function intToHex32(val) {
+      return "0x" + (val >>> 0).toString(16).padStart(8, '0').toUpperCase();
+    }
+
+    function intToHex16(val) {
+      return "0x" + (val & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+    }
+
+    function intToHex8(val) {
+      return "0x" + (val & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+    }
+
+    function intToBin(val, bits) {
+      return (val >>> 0).toString(2).padStart(bits, '0');
+    }
+
+    // RFC 791 / RFC 1071 Ones' complement checksum 計算
+    function calculateChecksum(words16, detailLog = null) {
+      let sum = 0;
+      for (let i = 0; i < words16.length; i++) {
+        sum += words16[i];
+        if (detailLog) {
+          detailLog.push(`Word[${i}]: 0x${words16[i].toString(16).padStart(4, '0').toUpperCase()} (累計總和: 0x${sum.toString(16).toUpperCase()})`);
+        }
+      }
+      if (detailLog) {
+        detailLog.push(`--- 折疊 32-bit 進位至 16-bit (Fold 32-bit sum to 16-bit) ---`);
+      }
+      while (sum > 0xFFFF) {
+        const carry = Math.floor(sum / 0x10000);
+        const lower = sum & 0xFFFF;
+        if (detailLog) {
+          detailLog.push(`進位: 0x${carry.toString(16).toUpperCase()} + 低位: 0x${lower.toString(16).padStart(4, '0').toUpperCase()}`);
+        }
+        sum = lower + carry;
+      }
+      const finalChecksum = (~sum) & 0xFFFF;
+      if (detailLog) {
+        detailLog.push(`取反相補數 (~0x${sum.toString(16).padStart(4, '0').toUpperCase()} & 0xFFFF) => 結果校驗和 Checksum: 0x${finalChecksum.toString(16).padStart(4, '0').toUpperCase()}`);
+      }
+      return finalChecksum;
+    }
+
+    function triggerPulse(elemId) {
+      const el = document.getElementById(elemId);
+      if (!el) return;
+      const target = el.closest('.grid-cell') || el;
+      target.classList.remove('highlight-pulse');
+      void target.offsetWidth;
+      target.classList.add('highlight-pulse');
+    }
+
+    // 核心連動更新函式 (指定目的地IP, Data長度, TTL，連動其餘欄位)
+    function onParamsChange(sourceField = null) {
+      const destIpStr = document.getElementById("destIp").value.trim() || "8.8.8.8";
+      let dataLength = parseInt(document.getElementById("dataLen").value, 10);
+      if (isNaN(dataLength) || dataLength < 0) dataLength = 0;
+      if (dataLength > 65507) dataLength = 65507;
+
+      let ttl = parseInt(document.getElementById("ttlVal").value, 10);
+      if (isNaN(ttl) || ttl < 1) ttl = 1;
+      if (ttl > 255) ttl = 255;
+
+      const srcIpStr = document.getElementById("srcIp").value.trim() || userLocalIp || "172.16.70.129";
+      
+      let ipId = 0x4E21;
+      const ipIdInput = document.getElementById("ipId").value.trim();
+      if (ipIdInput.startsWith("0x") || ipIdInput.startsWith("0X")) {
+        ipId = parseInt(ipIdInput, 16) || 0;
+      } else {
+        ipId = parseInt(ipIdInput, 10) || 0;
+      }
+      ipId = ipId & 0xFFFF;
+
+      const flagDf = parseInt(document.getElementById("flagDf").value, 10) || 1;
+      const tos = parseInt(document.getElementById("tosVal").value, 10) || 0;
+
+      // 1. 自動計算 Total Length: IPv4 Header (20) + ICMP Header (8) + Data Length
+      const ipHeaderLen = 20;
+      const icmpHeaderLen = 8;
+      const totalLength = ipHeaderLen + icmpHeaderLen + dataLength;
+
+      // 更新畫面上的總長度展示
+      document.getElementById("valTotalLen").textContent = `${totalLength} Bytes (${intToHex16(totalLength)})`;
+      document.getElementById("calcFormulaTotalLen").textContent = 
+        `Total Length = 20(IP) + 8(ICMP) + ${dataLength}(Data) = ${totalLength} Bytes (${intToHex16(totalLength)})`;
+
+      // 2. 更新使用者直接指定的欄位展示
+      document.getElementById("valTtl").textContent = `${ttl} (${intToHex8(ttl)})`;
+      
+      const destIpInt = ipToInt(destIpStr);
+      document.getElementById("valDestIp").textContent = `${destIpStr} (${intToHex32(destIpInt)})`;
+
+      const srcIpInt = ipToInt(srcIpStr);
+      document.getElementById("valSrcIp").textContent = `${srcIpStr} (${intToHex32(srcIpInt)})`;
+
+      // 3. 更新其他固定與輔助欄位
+      document.getElementById("valTos").textContent = intToHex8(tos);
+      document.getElementById("valId").textContent = `${intToHex16(ipId)}`;
+      const flagsBitStr = flagDf === 1 ? "010 (DF)" : "000";
+      document.getElementById("valFlags").textContent = flagsBitStr;
+
+      // 4. 計算 IPv4 Header Checksum
+      const ver_hlen_tos = (4 << 12) | (5 << 8) | (tos & 0xFF);
+      const total_len_word = totalLength & 0xFFFF;
+      const id_word = ipId & 0xFFFF;
+      const flags_offset_word = ((flagDf ? 2 : 0) << 13) | 0;
+      const ttl_protocol_word = ((ttl & 0xFF) << 8) | 1; // Protocol 1 = ICMP
+      const checksum_placeholder = 0;
+      const src_ip_high = (srcIpInt >>> 16) & 0xFFFF;
+      const src_ip_low = srcIpInt & 0xFFFF;
+      const dest_ip_high = (destIpInt >>> 16) & 0xFFFF;
+      const dest_ip_low = destIpInt & 0xFFFF;
+
+      const ipWords = [
+        ver_hlen_tos,
+        total_len_word,
+        id_word,
+        flags_offset_word,
+        ttl_protocol_word,
+        checksum_placeholder,
+        src_ip_high,
+        src_ip_low,
+        dest_ip_high,
+        dest_ip_low
+      ];
+
+      const calculationSteps = [];
+      const headerChecksum = calculateChecksum(ipWords, calculationSteps);
+
+      // 更新校驗和展示
+      document.getElementById("valChecksum").textContent = intToHex16(headerChecksum);
+      document.getElementById("calcFormulaChecksum").textContent = 
+        `Checksum = ~[ Σ(10 個 16-bit 標頭字) ] = ${intToHex16(headerChecksum)}`;
+
+      // 渲染校驗和推導詳細清單
+      const csBox = document.getElementById("checksumDetailsBox");
+      csBox.innerHTML = `
+        <div style="color: #38bdf8; font-weight: bold; margin-bottom: 4px;">=== IPv4 Header 16-bit Words 清單 (計算前 Checksum 欄位預設填 0) ===</div>
+        <div>[0] VER(4) + HLEN(5) + TOS(${intToHex8(tos)}): 0x${ver_hlen_tos.toString(16).padStart(4, '0').toUpperCase()}</div>
+        <div>[1] Total Length (${totalLength} B): 0x${total_len_word.toString(16).padStart(4, '0').toUpperCase()}</div>
+        <div>[2] Identification (${ipId}): 0x${id_word.toString(16).padStart(4, '0').toUpperCase()}</div>
+        <div>[3] Flags + Offset (${flagsBitStr}): 0x${flags_offset_word.toString(16).padStart(4, '0').toUpperCase()}</div>
+        <div>[4] TTL (${ttl}) + Protocol (1 ICMP): 0x${ttl_protocol_word.toString(16).padStart(4, '0').toUpperCase()}</div>
+        <div>[5] Checksum (計算時填入 0): 0x0000</div>
+        <div>[6] Source IP High: 0x${src_ip_high.toString(16).padStart(4, '0').toUpperCase()} (${srcIpStr})</div>
+        <div>[7] Source IP Low: 0x${src_ip_low.toString(16).padStart(4, '0').toUpperCase()}</div>
+        <div>[8] Dest IP High: 0x${dest_ip_high.toString(16).padStart(4, '0').toUpperCase()} (${destIpStr})</div>
+        <div>[9] Dest IP Low: 0x${dest_ip_low.toString(16).padStart(4, '0').toUpperCase()}</div>
+        <div style="color: #38bdf8; font-weight: bold; margin: 8px 0 4px 0;">=== 逐步反相累加計算過程 ===</div>
+        ${calculationSteps.map(step => `<div>${step}</div>`).join('')}
+      `;
+
+      // 5. 計算 ICMP Checksum
+      const icmpId = 1;
+      const icmpSeqVal = pingSeq;
+      document.getElementById("valIcmpSeq").textContent = icmpSeqVal;
+
+      // 構造 Data payload
+      const payloadBytes = [];
+      const asciiBase = "abcdefghijklmnopqrstuvwabcdefghi";
+      for (let i = 0; i < dataLength; i++) {
+        payloadBytes.push(asciiBase.charCodeAt(i % asciiBase.length));
+      }
+
+      // ICMP Words 計算
+      const icmpTypeAndCode = (8 << 8) | 0;
+      const icmpIdWord = icmpId & 0xFFFF;
+      const icmpSeqWord = icmpSeqVal & 0xFFFF;
+
+      const icmpWords = [icmpTypeAndCode, 0, icmpIdWord, icmpSeqWord];
+      for (let i = 0; i < payloadBytes.length; i += 2) {
+        const b1 = payloadBytes[i];
+        const b2 = (i + 1 < payloadBytes.length) ? payloadBytes[i + 1] : 0;
+        icmpWords.push((b1 << 8) | b2);
+      }
+      const icmpChecksum = calculateChecksum(icmpWords);
+      document.getElementById("valIcmpChecksum").textContent = intToHex16(icmpChecksum);
+
+      // 更新 Payload 預覽
+      document.getElementById("payloadLengthBadge").textContent = `長度: ${dataLength} Bytes`;
+      if (dataLength === 0) {
+        document.getElementById("valPayloadPreview").textContent = "(無資料負載，長度為 0)";
+      } else {
+        const previewLimit = 36;
+        const hexStrs = payloadBytes.slice(0, previewLimit).map(b => b.toString(16).padStart(2, '0'));
+        if (dataLength > previewLimit) hexStrs.push(`... (+${dataLength - previewLimit} more bytes)`);
+        document.getElementById("valPayloadPreview").textContent = hexStrs.join(' ');
+      }
+
+      // 6. 構造完整的二進位位元組組裝
+      const fullPacket = assembleFullPacket({
+        ver: 4,
+        hlen: 5,
+        tos: tos,
+        totalLength: totalLength,
+        id: ipId,
+        flagDf: flagDf,
+        ttl: ttl,
+        protocol: 1,
+        headerChecksum: headerChecksum,
+        srcIpInt: srcIpInt,
+        destIpInt: destIpInt,
+        icmpType: 8,
+        icmpCode: 0,
+        icmpChecksum: icmpChecksum,
+        icmpId: icmpId,
+        icmpSeq: icmpSeqVal,
+        payloadBytes: payloadBytes
+      });
+
+      // 更新 Wireshark Hex Dump 與程式碼
+      renderHexDump(fullPacket);
+      renderPythonCode(destIpStr, dataLength, ttl, srcIpStr);
+      renderCCode(destIpStr, dataLength, ttl, srcIpStr);
+
+      // 觸發視覺亮起動畫反應
+      if (sourceField === 'destIp') {
+        triggerPulse('valDestIp');
+        triggerPulse('valChecksum');
+      } else if (sourceField === 'srcIp') {
+        triggerPulse('valSrcIp');
+        triggerPulse('valChecksum');
+      } else if (sourceField === 'dataLen') {
+        triggerPulse('valTotalLen');
+        triggerPulse('valChecksum');
+        triggerPulse('valIcmpChecksum');
+      } else if (sourceField === 'ttlVal') {
+        triggerPulse('valTtl');
+        triggerPulse('valChecksum');
+      }
+    }
+
+    // 組裝完整的二進位位元組陣列
+    function assembleFullPacket(p) {
+      const bytes = [];
+      // Byte 0: VER(4) | HLEN(4)
+      bytes.push((p.ver << 4) | (p.hlen & 0x0F));
+      // Byte 1: TOS
+      bytes.push(p.tos & 0xFF);
+      // Byte 2-3: Total Length
+      bytes.push((p.totalLength >> 8) & 0xFF);
+      bytes.push(p.totalLength & 0xFF);
+      // Byte 4-5: ID
+      bytes.push((p.id >> 8) & 0xFF);
+      bytes.push(p.id & 0xFF);
+      // Byte 6-7: Flags + Fragment Offset
+      const flagVal = (p.flagDf ? 2 : 0) << 5;
+      bytes.push(flagVal);
+      bytes.push(0x00);
+      // Byte 8: TTL
+      bytes.push(p.ttl & 0xFF);
+      // Byte 9: Protocol
+      bytes.push(p.protocol & 0xFF);
+      // Byte 10-11: Header Checksum
+      bytes.push((p.headerChecksum >> 8) & 0xFF);
+      bytes.push(p.headerChecksum & 0xFF);
+      // Byte 12-15: Source IP
+      bytes.push((p.srcIpInt >>> 24) & 0xFF);
+      bytes.push((p.srcIpInt >>> 16) & 0xFF);
+      bytes.push((p.srcIpInt >>> 8) & 0xFF);
+      bytes.push(p.srcIpInt & 0xFF);
+      // Byte 16-19: Destination IP
+      bytes.push((p.destIpInt >>> 24) & 0xFF);
+      bytes.push((p.destIpInt >>> 16) & 0xFF);
+      bytes.push((p.destIpInt >>> 8) & 0xFF);
+      bytes.push(p.destIpInt & 0xFF);
+
+      // Byte 20-27: ICMP Header
+      bytes.push(p.icmpType);
+      bytes.push(p.icmpCode);
+      bytes.push((p.icmpChecksum >> 8) & 0xFF);
+      bytes.push(p.icmpChecksum & 0xFF);
+      bytes.push((p.icmpId >> 8) & 0xFF);
+      bytes.push(p.icmpId & 0xFF);
+      bytes.push((p.icmpSeq >> 8) & 0xFF);
+      bytes.push(p.icmpSeq & 0xFF);
+
+      // ICMP Payload
+      for (let b of p.payloadBytes) {
+        bytes.push(b);
+      }
+
+      return bytes;
+    }
+
+    // 格式化輸出 Wireshark Hex Dump
+    function renderHexDump(bytes) {
+      let lines = [];
+      for (let i = 0; i < bytes.length; i += 16) {
+        const chunk = bytes.slice(i, i + 16);
+        const offset = i.toString(16).padStart(4, '0');
+        
+        let hexPart = "";
+        let asciiPart = "";
+
+        for (let j = 0; j < 16; j++) {
+          if (j < chunk.length) {
+            hexPart += chunk[j].toString(16).padStart(2, '0') + " ";
+            const c = chunk[j];
+            asciiPart += (c >= 32 && c <= 126) ? String.fromCharCode(c) : ".";
+          } else {
+            hexPart += "   ";
+          }
+          if (j === 7) hexPart += " ";
+        }
+
+        lines.push(`${offset}   ${hexPart}  |${asciiPart}|`);
+      }
+      document.getElementById("hexViewerContent").textContent = lines.join("\n");
+    }
+
+    // 生成 Python Raw Socket 範例
+    function renderPythonCode(destIp, dataLen, ttl, srcIp) {
+      const code = `# Python 3 ICMP Ping (需 Administrator / root 權限執行 Raw Socket)
+import socket
+import struct
+import time
+
+def checksum(source_string):
+    count_to = (len(source_string) // 2) * 2
+    sum_val = 0
+    for count in range(0, count_to, 2):
+        this_val = source_string[count + 1] * 256 + source_string[count]
+        sum_val += this_val
+        sum_val = sum_val & 0xffffffff
+
+    if count_to < len(source_string):
+        sum_val += source_string[len(source_string) - 1]
+        sum_val = sum_val & 0xffffffff
+
+    sum_val = (sum_val >> 16) + (sum_val & 0xffff)
+    sum_val += (sum_val >> 16)
+    answer = ~sum_val
+    answer = answer & 0xffff
+    answer = answer >> 8 | (answer << 8 & 0xff00)
+    return answer
+
+def send_ping(dest_ip="${destIp}", ttl_val=${ttl}, payload_len=${dataLen}):
+    # 建立 ICMP Raw Socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, ttl_val)
+    
+    # 構造 ICMP Echo Request
+    icmp_type = 8
+    icmp_code = 0
+    icmp_id = 1
+    icmp_seq = 1
+    
+    # 負載資料 (長度 ${dataLen} Bytes)
+    data = (b"abcdefghijklmnopqrstuvw" * (${dataLen} // 23 + 1))[:${dataLen}]
+    
+    # 計算 ICMP Checksum
+    dummy_header = struct.pack("!BBHHH", icmp_type, icmp_code, 0, icmp_id, icmp_seq)
+    chk = checksum(dummy_header + data)
+    icmp_packet = struct.pack("!BBHHH", icmp_type, icmp_code, chk, icmp_id, icmp_seq) + data
+    
+    # 發送封包
+    sock.sendto(icmp_packet, (dest_ip, 1))
+    print(f"已發送 ICMP Echo Request 至 {dest_ip}, TTL={ttl_val}, Data={payload_len}B")
+    
+if __name__ == '__main__':
+    send_ping()`;
+      document.getElementById("pythonCodeContent").textContent = code;
+    }
+
+    // 生成 C 語言範例
+    function renderCCode(destIp, dataLen, ttl, srcIp) {
+      const code = `// C 語言 ICMP Ping 實作範例 (RFC 791 / RFC 1071)
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+// 計算 16-bit 網際網路校驗和 (Checksum)
+unsigned short in_cksum(unsigned short *addr, int len) {
+    int nleft = len;
+    int sum = 0;
+    unsigned short *w = addr;
+    unsigned short answer = 0;
+
+    while (nleft > 1) {
+        sum += *w++;
+        nleft -= 2;
+    }
+    if (nleft == 1) {
+        *(unsigned char *)(&answer) = *(unsigned char *)w;
+        sum += answer;
+    }
+    sum = (sum >> 16) + (sum & 0xffff);
+    sum += (sum >> 16);
+    answer = ~sum;
+    return answer;
+}
+
+int main() {
+    const char* dest_ip = "${destIp}";
+    int ttl = ${ttl};
+    int data_len = ${dataLen};
+    int total_len = 20 + 8 + data_len; // IPv4 (20) + ICMP (8) + Data
+
+    printf("目標 IP: %s\\n", dest_ip);
+    printf("TTL: %d\\n", ttl);
+    printf("Data 長度: %d 位元組\\n", data_len);
+    printf("IPv4 Total Length 自動連動計算為: %d 位元組\\n", total_len);
+    
+    return 0;
+}`;
+      document.getElementById("cCodeContent").textContent = code;
+    }
+
+    // 終端機 Ping 核心引擎
+    function onSendModeChange() {
+      const mode = document.getElementById("sendModeSelect").value;
+      const stopBtn = document.getElementById("btnStopPing");
+      if (mode === "continuous" && isPinging) {
+        stopBtn.style.display = "block";
+      } else {
+        stopBtn.style.display = "none";
+      }
+    }
+
+    function setSendButtonState(enabled, text) {
+      const btn = document.getElementById("btnSendPing");
+      const txt = document.getElementById("btnSendText");
+      btn.disabled = !enabled;
+      if (text) txt.textContent = text;
+    }
+
+    // 核心「送出」按鈕點擊處理
+    function handleSendPingClick() {
+      const destIp = document.getElementById("destIp").value.trim() || "8.8.8.8";
+      let dataLen = parseInt(document.getElementById("dataLen").value, 10);
+      if (isNaN(dataLen) || dataLen < 0) dataLen = 0;
+      let ttl = parseInt(document.getElementById("ttlVal").value, 10);
+      if (isNaN(ttl) || ttl < 1) ttl = 1;
+
+      const mode = document.getElementById("sendModeSelect").value;
+
+      // 如果更換了目標 IP 或為新的一輪，重置統計與序號
+      if (destIp !== currentTargetIp || pingStats.sent === 0) {
+        currentTargetIp = destIp;
+        pingSeq = 1;
+        pingStats = { sent: 0, received: 0, times: [] };
+        appendTerminalLine(`\n正在 Ping ${destIp} 具有 ${dataLen} 位元組的資料 (IPv4 總長: ${28 + dataLen} 位元組, TTL=${ttl}):`, "term-prompt");
+      }
+
+      document.getElementById("pingStatusText").textContent = "SENDING";
+      document.getElementById("pingStatusText").style.color = "#38bdf8";
+
+      if (mode === "1") {
+        // === 模式 1：單次送出 (按一次送出 1 封包) ===
+        setSendButtonState(false, "封包發送中...");
+        sendSinglePingTurn(destIp, dataLen, ttl, () => {
+          setSendButtonState(true, "送出 Ping 封包 (Send)");
+          document.getElementById("pingStatusText").textContent = "IDLE";
+          document.getElementById("pingStatusText").style.color = "#64748b";
+        });
+      } else if (mode === "4") {
+        // === 模式 2：批次送出 4 次 (Windows 標準 Ping) ===
+        setSendButtonState(false, "發送中 (1/4)...");
+        let count = 0;
+        const sendNext = () => {
+          count++;
+          setSendButtonState(false, `發送中 (${count}/4)...`);
+          sendSinglePingTurn(destIp, dataLen, ttl, () => {
+            if (count < 4) {
+              setTimeout(sendNext, 700);
+            } else {
+              setSendButtonState(true, "送出 Ping 封包 (Send)");
+              document.getElementById("pingStatusText").textContent = "IDLE";
+              document.getElementById("pingStatusText").style.color = "#64748b";
+              printPingStatistics(destIp);
+            }
+          });
+        };
+        sendNext();
+      } else if (mode === "continuous") {
+        // === 模式 3：連續發送 (手動點停止) ===
+        if (isPinging) return;
+        isPinging = true;
+        setSendButtonState(false, "連續發送中...");
+        const stopBtn = document.getElementById("btnStopPing");
+        stopBtn.style.display = "block";
+        stopBtn.disabled = false;
+        document.getElementById("pingStatusText").textContent = "RUNNING";
+        document.getElementById("pingStatusText").style.color = "#22c55e";
+
+        const loop = () => {
+          if (!isPinging) return;
+          sendSinglePingTurn(destIp, dataLen, ttl, () => {
+            if (isPinging) {
+              pingIntervalId = setTimeout(loop, 1000);
+            }
+          });
+        };
+        loop();
+      }
+    }
+
+    // 發送單一輪次 Ping 封包 (支援 Windows 原生真實 ICMP Ping)
+    async function sendSinglePingTurn(destIp, dataLen, ttl, onComplete) {
+      const curSeq = pingSeq;
+      pingSeq++;
+      onParamsChange(); // 更新封包圖表的序號與 ICMP Checksum
+
+      pingStats.sent++;
+
+      // 方案 1：若後端服務在線，執行真實 Windows 原生 ICMP Ping
+      if (isBackendOnline) {
+        try {
+          const url = `http://localhost:3000/api/ping?ip=${encodeURIComponent(destIp)}&len=${dataLen}&ttl=${ttl}&n=1`;
+          const res = await fetch(url);
+          const data = await res.json();
+
+          if (data && data.success) {
+            // 檢查是否 TTL 超時 (中間路由器回覆)
+            if (data.isTtlExpired) {
+              const line = data.lines.find(l => /過期|expired|TTL exceeded/i.test(l)) || `來自閘道的回覆: 存留時間 (TTL) 已過期 (真實路由器回覆)`;
+              appendTerminalLine(`[真實 ICMP] ${line}`, "term-warn");
+              if (onComplete) onComplete(false);
+              return;
+            }
+
+            // 檢查是否目標無回應
+            if (data.isTimeout || data.replyTime === null) {
+              appendTerminalLine(`[真實 ICMP] 要求等候逾時 (Request timed out) - 目標 ${destIp} 無回應`, "term-err");
+              if (onComplete) onComplete(false);
+              return;
+            }
+
+            // 成功取得真實網路回覆
+            const rtt = data.replyTime;
+            const replyTtl = data.replyTtl || ttl;
+            pingStats.received++;
+            pingStats.times.push(rtt);
+
+            appendTerminalLine(`[真實 ICMP] 來自 ${destIp} 的回覆: 位元組=${dataLen} 時間=${rtt} ms TTL=${replyTtl}`, "term-reply");
+            if (onComplete) onComplete(true);
+            return;
+          }
+        } catch (err) {
+          console.warn("真實 Ping 呼叫發生錯誤，切換回報模式:", err);
+        }
+      }
+
+      // 方案 2：若後端服務尚未開啟，引導使用者點擊啟動
+      appendTerminalLine(`[⚠️ 提示] 瀏覽器環境無法直接存取底層 RAW Socket 發送真實 ICMP 封包。`, "term-warn");
+      appendTerminalLine(`  請雙擊專案資料夾內的「啟動Ping伺服器.bat」或執行「node server.js」`, "term-prompt");
+      appendTerminalLine(`  啟動後即可透過真實網路傳送 ICMP 封包至 ${destIp}！`, "term-prompt");
+      if (onComplete) onComplete(false);
+    }
+
+    function stopPing() {
+      if (!isPinging) return;
+      isPinging = false;
+      if (pingIntervalId) {
+        clearTimeout(pingIntervalId);
+        pingIntervalId = null;
+      }
+
+      setSendButtonState(true, "送出 Ping 封包 (Send)");
+      const stopBtn = document.getElementById("btnStopPing");
+      stopBtn.disabled = true;
+      document.getElementById("pingStatusText").textContent = "STOPPED";
+      document.getElementById("pingStatusText").style.color = "#ef4444";
+
+      const destIp = document.getElementById("destIp").value.trim() || "8.8.8.8";
+      printPingStatistics(destIp);
+    }
+
+    function printPingStatistics(destIp) {
+      const lossRate = pingStats.sent > 0 
+        ? (((pingStats.sent - pingStats.received) / pingStats.sent) * 100).toFixed(1) 
+        : 0;
+
+      appendTerminalLine(`--- ${destIp} ping 統計資料 ---`, "term-stat");
+      appendTerminalLine(`已傳送 ${pingStats.sent} 個封包，已收到 ${pingStats.received} 個封包，遺失率 ${lossRate}%`, "term-stat");
+
+      if (pingStats.times.length > 0) {
+        const min = Math.min(...pingStats.times).toFixed(2);
+        const max = Math.max(...pingStats.times).toFixed(2);
+        const avg = (pingStats.times.reduce((a, b) => a + b, 0) / pingStats.times.length).toFixed(2);
+        appendTerminalLine(`往返時間 (RTT) 最短/平均/最長 = ${min}/${avg}/${max} ms`, "term-stat");
+      }
+    }
+
+    function appendTerminalLine(text, className = "term-reply") {
+      const term = document.getElementById("terminalOutput");
+      const line = document.createElement("div");
+      line.className = `terminal-line ${className}`;
+      line.textContent = text;
+      term.appendChild(line);
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function clearTerminal() {
+      document.getElementById("terminalOutput").innerHTML = "";
+    }
+
+    function switchTab(tabId, btn) {
+      document.getElementById("hexTab").style.display = "none";
+      document.getElementById("pythonTab").style.display = "none";
+      document.getElementById("cTab").style.display = "none";
+      document.getElementById(tabId).style.display = "block";
+
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    }
+
+    function copyHexDump() {
+      const text = document.getElementById("hexViewerContent").textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        alert("Wireshark Hex 數據已複製至剪貼簿！");
+      });
+    }
+
+    function copyCode(elemId) {
+      const text = document.getElementById(elemId).textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        alert("程式碼已複製至剪貼簿！");
+      });
+    }
+
+    // 點擊欄位查看詳細資訊
+    function inspectField(fieldKey) {
+      const def = fieldDefinitions[fieldKey];
+      if (!def) return;
+
+      document.getElementById("modalTitle").textContent = def.name;
+      document.getElementById("modalDesc").textContent = def.desc;
+      document.getElementById("modalBits").textContent = def.bits;
+      document.getElementById("modalRelation").textContent = def.relation;
+
+      let decVal = "--";
+      let hexVal = "--";
+      let binVal = "--";
+
+      const dataLength = parseInt(document.getElementById("dataLen").value, 10) || 0;
+      const ttl = parseInt(document.getElementById("ttlVal").value, 10) || 64;
+      const destIpStr = document.getElementById("destIp").value.trim() || "8.8.8.8";
+      const totalLen = 28 + dataLength;
+
+      if (fieldKey === "VER") {
+        decVal = "4"; hexVal = "0x4"; binVal = "0100";
+      } else if (fieldKey === "HLEN") {
+        decVal = "5 (20 Bytes)"; hexVal = "0x5"; binVal = "0101";
+      } else if (fieldKey === "TOS") {
+        decVal = "0"; hexVal = "0x00"; binVal = "00000000";
+      } else if (fieldKey === "TOTAL_LEN") {
+        decVal = `${totalLen} Bytes`; hexVal = intToHex16(totalLen); binVal = intToBin(totalLen, 16);
+      } else if (fieldKey === "ID") {
+        decVal = "20001"; hexVal = "0x4E21"; binVal = intToBin(20001, 16);
+      } else if (fieldKey === "FLAGS") {
+        decVal = "2 (DF)"; hexVal = "0x2"; binVal = "010";
+      } else if (fieldKey === "OFFSET") {
+        decVal = "0"; hexVal = "0x0000"; binVal = "0000000000000";
+      } else if (fieldKey === "TTL") {
+        decVal = `${ttl}`; hexVal = intToHex8(ttl); binVal = intToBin(ttl, 8);
+      } else if (fieldKey === "PROTOCOL") {
+        decVal = "1 (ICMP)"; hexVal = "0x01"; binVal = "00000001";
+      } else if (fieldKey === "CHECKSUM") {
+        const cs = document.getElementById("valChecksum").textContent;
+        decVal = parseInt(cs, 16).toString(); hexVal = cs; binVal = intToBin(parseInt(cs, 16), 16);
+      } else if (fieldKey === "SRC_IP") {
+        const srcIp = document.getElementById("srcIp").value.trim();
+        const srcInt = ipToInt(srcIp);
+        decVal = srcIp; hexVal = intToHex32(srcInt); binVal = intToBin(srcInt, 32);
+      } else if (fieldKey === "DEST_IP") {
+        const destInt = ipToInt(destIpStr);
+        decVal = destIpStr; hexVal = intToHex32(destInt); binVal = intToBin(destInt, 32);
+      } else if (fieldKey === "OPTIONS") {
+        decVal = "0"; hexVal = "None"; binVal = "None";
+      }
+
+      document.getElementById("modalDec").textContent = decVal;
+      document.getElementById("modalHex").textContent = hexVal;
+      document.getElementById("modalBin").textContent = binVal;
+
+      document.getElementById("fieldInfoModal").style.display = "flex";
+    }
+
+    function closeModal() {
+      document.getElementById("fieldInfoModal").style.display = "none";
+    }
+
+    function closeModalOnBackdrop(event) {
+      if (event.target === document.getElementById("fieldInfoModal")) {
+        closeModal();
+      }
+    }
+
+    // 頁面載入初始化
+    window.addEventListener("DOMContentLoaded", () => {
+      onParamsChange();
+      fetchUserIpAndCheckBackend();
+    });
+  </script>
+</body>
+</html>
